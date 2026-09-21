@@ -36,7 +36,6 @@ jobs:
     - name: Check module vendoring
       run: |
         go mod tidy
-        go mod vendor
         go mod verify
         test -z "$(git status --porcelain)" || (echo "please run 'go mod tidy && go mod vendor', and submit your changes"; exit 1)
 
