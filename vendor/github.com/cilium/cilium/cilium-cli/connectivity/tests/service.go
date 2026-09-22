@@ -56,12 +56,16 @@ func (s *podToService) Run(ctx context.Context, t *check.Test) {
 			}
 
 			t.ForEachIPFamily(func(ipFamily features.IPFamily) {
+				backends, err := svc.BackendEndpoints(ctx, ct.K8sClient(), ipFamily)
+				if err != nil {
+					t.Fatalf("Failed to resolve backends for service %s: %v", svc.Name(), err)
+					return
+				}
 				t.NewAction(s, fmt.Sprintf("curl-%s-%d", ipFamily, i), &pod, svc, ipFamily).Run(func(a *check.Action) {
 					a.ExecInPod(ctx, a.CurlCommand(svc))
 
 					a.ValidateFlows(ctx, pod, a.GetEgressRequirements(check.FlowParameters{
-						DNSRequired: true,
-						AltDstPort:  svc.Port(),
+						AltDstEndpoints: backends,
 					}))
 
 					a.ValidateMetrics(ctx, pod, a.GetEgressMetricsRequirements())

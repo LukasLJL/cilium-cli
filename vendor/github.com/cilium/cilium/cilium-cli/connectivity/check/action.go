@@ -706,6 +706,16 @@ func (a *Action) GetEgressRequirements(p FlowParameters) (reqs []filters.FlowSet
 			tcpResponse = filters.Or(filters.TCP(p.AltDstPort, 0), tcpResponse)
 		}
 
+		request := filters.And(ipRequest, tcpRequest)
+		response := filters.And(ipResponse, tcpResponse)
+		for _, endpoint := range p.AltDstEndpoints {
+			if net.ParseIP(endpoint.IP) == nil || endpoint.Port == 0 {
+				continue
+			}
+			request = filters.Or(request, filters.And(filters.IP(srcIP, endpoint.IP), filters.TCP(0, endpoint.Port)))
+			response = filters.Or(response, filters.And(filters.IP(endpoint.IP, srcIP), filters.TCP(endpoint.Port, 0)))
+		}
+
 		if (a.expEgress.Drop || a.expEgress.EgressDrop) && !a.expEgress.L7Proxy {
 			dropFilter := filters.Drop()
 			if a.expEgress.EgressDrop {
@@ -713,32 +723,32 @@ func (a *Action) GetEgressRequirements(p FlowParameters) (reqs []filters.FlowSet
 			}
 			// L3/L4 drop
 			egress = filters.FlowSetRequirement{
-				First: filters.FlowRequirement{Filter: filters.And(ipRequest, tcpRequest, filters.SYN()), Msg: "SYN"},
-				Last:  filters.FlowRequirement{Filter: filters.And(ipRequest, tcpRequest, dropFilter), Msg: "Drop"},
+				First: filters.FlowRequirement{Filter: filters.And(request, filters.SYN()), Msg: "SYN"},
+				Last:  filters.FlowRequirement{Filter: filters.And(request, dropFilter), Msg: "Drop"},
 				Except: []filters.FlowRequirement{
-					{Filter: filters.And(ipResponse, tcpResponse, filters.SYNACK()), Msg: "SYN-ACK"},
-					{Filter: filters.And(filters.Or(filters.And(ipRequest, tcpRequest), filters.And(ipResponse, tcpResponse)), filters.FIN()), Msg: "FIN"},
+					{Filter: filters.And(response, filters.SYNACK()), Msg: "SYN-ACK"},
+					{Filter: filters.And(filters.Or(request, response), filters.FIN()), Msg: "FIN"},
 				},
 			}
 		} else {
 			egress = filters.FlowSetRequirement{
-				First: filters.FlowRequirement{Filter: filters.And(ipRequest, tcpRequest, filters.SYN()), Msg: "SYN"},
+				First: filters.FlowRequirement{Filter: filters.And(request, filters.SYN()), Msg: "SYN"},
 				Middle: []filters.FlowRequirement{
-					{Filter: filters.And(ipResponse, tcpResponse, filters.SYNACK()), Msg: "SYN-ACK", SkipOnAggregation: true},
+					{Filter: filters.And(response, filters.SYNACK()), Msg: "SYN-ACK", SkipOnAggregation: true},
 				},
 				// Either side may FIN first
-				Last: filters.FlowRequirement{Filter: filters.And(filters.Or(filters.And(ipRequest, tcpRequest), filters.And(ipResponse, tcpResponse)), filters.FIN()), Msg: "FIN"},
+				Last: filters.FlowRequirement{Filter: filters.And(filters.Or(request, response), filters.FIN()), Msg: "FIN"},
 				Except: []filters.FlowRequirement{
-					{Filter: filters.And(filters.Or(filters.And(ipRequest, tcpRequest), filters.And(ipResponse, tcpResponse)), filters.Drop()), Msg: "L3/L4 Drop"},
+					{Filter: filters.And(filters.Or(request, response), filters.Drop()), Msg: "L3/L4 Drop"},
 				},
 			}
 			if p.RSTAllowed {
 				// For the connection termination, we will either see:
 				// a) FIN + FIN b) FIN + RST c) RST
 				// Either side may RST or FIN first
-				egress.Last = filters.FlowRequirement{Filter: filters.And(filters.Or(filters.And(ipRequest, tcpRequest), filters.And(ipResponse, tcpResponse)), filters.Or(filters.FIN(), filters.RST())), Msg: "FIN or RST", SkipOnAggregation: true}
+				egress.Last = filters.FlowRequirement{Filter: filters.And(filters.Or(request, response), filters.Or(filters.FIN(), filters.RST())), Msg: "FIN or RST", SkipOnAggregation: true}
 			} else {
-				egress.Except = append(egress.Except, filters.FlowRequirement{Filter: filters.And(filters.Or(filters.And(ipRequest, tcpRequest), filters.And(ipResponse, tcpResponse)), filters.RST()), Msg: "RST"})
+				egress.Except = append(egress.Except, filters.FlowRequirement{Filter: filters.And(filters.Or(request, response), filters.RST()), Msg: "RST"})
 			}
 			if a.expEgress.L7Proxy || a.expEgress.HTTP.Status != "" || a.expEgress.HTTP.Method != "" || a.expEgress.HTTP.URL != "" {
 				// HTTP access logs may come from a separate Envoy proxy upstream connection which may be

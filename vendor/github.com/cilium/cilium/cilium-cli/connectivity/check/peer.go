@@ -4,6 +4,7 @@
 package check
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"net"
@@ -11,6 +12,8 @@ import (
 	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/cilium/cilium/api/v1/flow"
 	"github.com/cilium/cilium/cilium-cli/k8s"
@@ -240,6 +243,68 @@ func (s Service) Address(family features.IPFamily) string {
 // Port returns the first port of the Service.
 func (s Service) Port() uint32 {
 	return uint32(s.Service.Spec.Ports[0].Port)
+}
+
+// BackendEndpoints returns the ready backend addresses and target ports for
+// the first service port in the requested IP family.
+func (s Service) BackendEndpoints(ctx context.Context, client *k8s.Client, family features.IPFamily) ([]FlowEndpoint, error) {
+	slices, err := client.ListEndpointSlices(ctx, metav1.ListOptions{
+		LabelSelector: discoveryv1.LabelServiceName + "=" + s.Service.Name,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing EndpointSlices for service %s: %w", s.Name(), err)
+	}
+
+	return s.backendEndpoints(slices.Items, family), nil
+}
+
+func (s Service) backendEndpoints(slices []discoveryv1.EndpointSlice, family features.IPFamily) []FlowEndpoint {
+	servicePort := s.Service.Spec.Ports[0]
+	wantedAddressType := discoveryv1.AddressTypeIPv4
+	if family == features.IPFamilyV6 {
+		wantedAddressType = discoveryv1.AddressTypeIPv6
+	}
+
+	seen := map[FlowEndpoint]struct{}{}
+	var backends []FlowEndpoint
+	for _, endpointSlice := range slices {
+		if endpointSlice.Namespace != s.Service.Namespace || endpointSlice.AddressType != wantedAddressType {
+			continue
+		}
+
+		for _, endpointPort := range endpointSlice.Ports {
+			portName := ""
+			if endpointPort.Name != nil {
+				portName = *endpointPort.Name
+			}
+			protocol := corev1.ProtocolTCP
+			if endpointPort.Protocol != nil {
+				protocol = *endpointPort.Protocol
+			}
+			if portName != servicePort.Name || protocol != servicePort.Protocol || endpointPort.Port == nil || *endpointPort.Port <= 0 {
+				continue
+			}
+
+			for _, endpoint := range endpointSlice.Endpoints {
+				if endpoint.Conditions.Ready != nil && !*endpoint.Conditions.Ready && !s.Service.Spec.PublishNotReadyAddresses {
+					continue
+				}
+				for _, address := range endpoint.Addresses {
+					ip := net.ParseIP(address)
+					if ip == nil || (family == features.IPFamilyV4) != (ip.To4() != nil) {
+						continue
+					}
+					backend := FlowEndpoint{IP: address, Port: uint32(*endpointPort.Port)}
+					if _, ok := seen[backend]; ok {
+						continue
+					}
+					seen[backend] = struct{}{}
+					backends = append(backends, backend)
+				}
+			}
+		}
+	}
+	return backends
 }
 
 // HasLabel checks if given label exists and value matches.
