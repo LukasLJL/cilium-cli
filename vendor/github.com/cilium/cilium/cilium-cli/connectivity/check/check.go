@@ -371,6 +371,14 @@ type FlowParameters struct {
 	// pair is matched atomically, which avoids accepting combinations that do
 	// not identify an actual destination after NAT.
 	AltDstEndpoints []FlowEndpoint
+
+	// AltRequestSourceIPs contains alternative request source addresses. These
+	// addresses are only combined with AltDstEndpoints.
+	AltRequestSourceIPs []string
+
+	// AltResponseDestinationIPs contains alternative response destination
+	// addresses. These addresses are only combined with AltDstEndpoints.
+	AltResponseDestinationIPs []string
 }
 
 // FlowEndpoint identifies one valid destination of a flow.

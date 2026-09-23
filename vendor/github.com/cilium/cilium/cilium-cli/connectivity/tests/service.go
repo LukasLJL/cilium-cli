@@ -10,7 +10,11 @@ import (
 	"slices"
 	"strconv"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/cilium/cilium/cilium-cli/connectivity/check"
+	"github.com/cilium/cilium/cilium-cli/defaults"
+	"github.com/cilium/cilium/cilium-cli/k8s"
 	"github.com/cilium/cilium/cilium-cli/utils/features"
 	slimcorev1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/api/core/v1"
 	"github.com/cilium/cilium/pkg/versioncheck"
@@ -430,8 +434,64 @@ type podToItselfViaService struct {
 	check.ScenarioBase
 }
 
+const (
+	defaultServiceLoopbackIPv4 = "169.254.42.1"
+	defaultServiceLoopbackIPv6 = "fe80::1"
+	serviceLoopbackIPv4Key     = "ipv4-service-loopback-address"
+	serviceLoopbackIPv6Key     = "ipv6-service-loopback-address"
+)
+
 func (s *podToItselfViaService) Name() string {
 	return "pod-to-itself-via-service"
+}
+
+func serviceLoopbackAddress(ctx context.Context, ct *check.ConnectivityTest, family features.IPFamily) (string, error) {
+	configMap, err := ct.K8sClient().GetConfigMap(ctx, ct.Params().CiliumNamespace, defaults.ConfigMapName, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("retrieving ConfigMap %s/%s for service loopback address: %w", ct.Params().CiliumNamespace, defaults.ConfigMapName, err)
+	}
+	return configuredServiceLoopbackAddress(configMap.Data, family)
+}
+
+func configuredServiceLoopbackAddress(config map[string]string, family features.IPFamily) (string, error) {
+	key, address := serviceLoopbackIPv4Key, defaultServiceLoopbackIPv4
+	if family == features.IPFamilyV6 {
+		key, address = serviceLoopbackIPv6Key, defaultServiceLoopbackIPv6
+	}
+	if configured := config[key]; configured != "" {
+		address = configured
+	}
+
+	ip := net.ParseIP(address)
+	if ip == nil || (family == features.IPFamilyV4) != (ip.To4() != nil) {
+		return "", fmt.Errorf("invalid Cilium %s value %q", key, address)
+	}
+	return address, nil
+}
+
+func selfBackendEndpoints(pod check.Pod, backends []check.FlowEndpoint, family features.IPFamily) []check.FlowEndpoint {
+	podIP := net.ParseIP(pod.Address(family))
+	selfBackends := make([]check.FlowEndpoint, 0, 1)
+	for _, backend := range backends {
+		if podIP.Equal(net.ParseIP(backend.IP)) {
+			selfBackends = append(selfBackends, backend)
+		}
+	}
+	return selfBackends
+}
+
+type backendEndpointResolver func(context.Context, *k8s.Client, features.IPFamily) ([]check.FlowEndpoint, error)
+
+func resolveSelfBackendEndpoints(ctx context.Context, client *k8s.Client, pod check.Pod, family features.IPFamily, resolve backendEndpointResolver) ([]check.FlowEndpoint, error) {
+	backends, err := resolve(ctx, client, family)
+	if err != nil {
+		return nil, err
+	}
+	selfBackends := selfBackendEndpoints(pod, backends, family)
+	if len(selfBackends) == 0 {
+		return nil, fmt.Errorf("pod %s with %s address %s is not a ready service backend", pod.Name(), family, pod.Address(family))
+	}
+	return selfBackends, nil
 }
 
 func (s *podToItselfViaService) Run(ctx context.Context, t *check.Test) {
@@ -445,12 +505,23 @@ func (s *podToItselfViaService) Run(ctx context.Context, t *check.Test) {
 				if ipFamily == features.IPFamilyV6 && !versioncheck.MustCompile(">=1.19.0")(ct.CiliumVersion) {
 					return
 				}
+				selfBackends, err := resolveSelfBackendEndpoints(ctx, ct.K8sClient(), pod, ipFamily, svc.BackendEndpoints)
+				if err != nil {
+					t.Fatalf("Failed to resolve self backend for service %s: %v", svc.Name(), err)
+					return
+				}
+				loopbackIP, err := serviceLoopbackAddress(ctx, ct, ipFamily)
+				if err != nil {
+					t.Fatalf("Failed to resolve service loopback address: %v", err)
+					return
+				}
 
 				t.NewAction(s, fmt.Sprintf("curl-%s-%d", ipFamily, i), &pod, svc, ipFamily).Run(func(a *check.Action) {
 					a.ExecInPod(ctx, a.CurlCommand(svc))
 					a.ValidateFlows(ctx, pod, a.GetEgressRequirements(check.FlowParameters{
-						DNSRequired: true,
-						AltDstPort:  svc.Port(),
+						AltDstEndpoints:           selfBackends,
+						AltRequestSourceIPs:       []string{loopbackIP},
+						AltResponseDestinationIPs: []string{loopbackIP},
 					}))
 					a.ValidateMetrics(ctx, pod, a.GetEgressMetricsRequirements())
 				})
