@@ -21,12 +21,14 @@ var (
 
 type localRedirectPolicy struct{}
 
-func (t localRedirectPolicy) build(ct *check.ConnectivityTest, _ map[string]string) {
-	lrpFrontendIPV4 := "169.254.169.249"
-	lrpFrontendIPV6 := "fd00::169:254:169:249"
-	lrpFrontendIPSkipRedirectV4 := "169.254.169.248"
-	lrpFrontendIPSkipRedirectV6 := "fd00::169:254:169:248"
+const (
+	lrpFrontendIPV4             = "169.254.169.249"
+	lrpFrontendIPV6             = "fd00::169:254:169:249"
+	lrpFrontendIPSkipRedirectV4 = "169.254.169.248"
+	lrpFrontendIPSkipRedirectV6 = "fd00::169:254:169:248"
+)
 
+func (t localRedirectPolicy) build(ct *check.ConnectivityTest, _ map[string]string) {
 	lrpTest := newTest("local-redirect-policy", ct).
 		WithCondition(func() bool {
 			return ct.IsSocketLBFull() || versioncheck.MustCompile(">=1.17.0")(ct.CiliumVersion)
@@ -67,17 +69,19 @@ func (t localRedirectPolicy) build(ct *check.ConnectivityTest, _ map[string]stri
 			tests.LRP(true),
 		).
 		WithExpectations(func(a *check.Action) (egress, ingress check.Result) {
-			if a.Scenario().Name() == "lrp-skip-redirect-from-backend" {
-				if a.Source().HasLabel("lrp", "backend") {
-					if a.Destination().Address(features.IPFamilyV4) == lrpFrontendIPSkipRedirectV4 {
-						return check.ResultPolicyDenyEgressDrop, check.ResultNone
-					}
-					if a.Destination().Address(features.IPFamilyV6) == lrpFrontendIPSkipRedirectV6 {
-						return check.ResultPolicyDenyEgressDrop, check.ResultNone
-					}
-				}
-				return check.ResultOK, check.ResultNone
-			}
-			return check.ResultOK, check.ResultNone
+			return localRedirectPolicyExpectedResult(
+				a.Scenario().Name(),
+				a.Source().HasLabel("lrp", "backend"),
+				a.Destination().Address(features.IPFamilyV4),
+				a.Destination().Address(features.IPFamilyV6),
+			)
 		})
+}
+
+func localRedirectPolicyExpectedResult(scenario string, sourceIsBackend bool, destinationV4, destinationV6 string) (check.Result, check.Result) {
+	if scenario == "lrp-skip-redirect-from-backend" && sourceIsBackend &&
+		(destinationV4 == lrpFrontendIPSkipRedirectV4 || destinationV6 == lrpFrontendIPSkipRedirectV6) {
+		return check.ResultPolicyDenyEgressDrop, check.ResultNone
+	}
+	return check.ResultOK, check.ResultNone
 }
