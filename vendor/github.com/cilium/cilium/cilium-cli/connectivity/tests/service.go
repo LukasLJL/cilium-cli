@@ -409,11 +409,22 @@ func (s *podToL7Service) Run(ctx context.Context, t *check.Test) {
 					t.Fatalf("Failed to resolve backends for service %s: %v", svc.Name(), err)
 					return
 				}
+				flowParameters := check.FlowParameters{AltDstEndpoints: backends}
+				selfBackends := selfBackendEndpoints(pod, backends, ipFamily)
+				if len(selfBackends) > 0 {
+					loopbackIP, err := serviceLoopbackAddress(ctx, ct, ipFamily)
+					if err != nil {
+						t.Fatalf("Failed to resolve service loopback address: %v", err)
+						return
+					}
+					if loopbackIP != "" {
+						flowParameters.AltRequestSourceIPs = []string{loopbackIP}
+						flowParameters.AltRequestDstEndpoints = selfBackends
+					}
+				}
 				t.NewAction(s, fmt.Sprintf("curl-%s-%d", ipFamily, i), &pod, svc, ipFamily).Run(func(a *check.Action) {
 					a.ExecInPod(ctx, a.CurlCommand(svc))
-					a.ValidateFlows(ctx, pod, a.GetEgressRequirements(check.FlowParameters{
-						AltDstEndpoints: backends,
-					}))
+					a.ValidateFlows(ctx, pod, a.GetEgressRequirements(flowParameters))
 				})
 			})
 			i++
@@ -457,6 +468,8 @@ func configuredServiceLoopbackAddress(config map[string]string, family features.
 	key, address := serviceLoopbackIPv4Key, defaultServiceLoopbackIPv4
 	if family == features.IPFamilyV6 {
 		key, address = serviceLoopbackIPv6Key, defaultServiceLoopbackIPv6
+	} else if family != features.IPFamilyV4 {
+		return "", fmt.Errorf("service loopback address is unavailable for %s", family)
 	}
 	if configured := config[key]; configured != "" {
 		address = configured
@@ -518,10 +531,14 @@ func (s *podToItselfViaService) Run(ctx context.Context, t *check.Test) {
 
 				t.NewAction(s, fmt.Sprintf("curl-%s-%d", ipFamily, i), &pod, svc, ipFamily).Run(func(a *check.Action) {
 					a.ExecInPod(ctx, a.CurlCommand(svc))
+					var altRequestSourceIPs []string
+					if loopbackIP != "" {
+						altRequestSourceIPs = []string{loopbackIP}
+					}
 					a.ValidateFlows(ctx, pod, a.GetEgressRequirements(check.FlowParameters{
-						AltDstEndpoints:           selfBackends,
-						AltRequestSourceIPs:       []string{loopbackIP},
-						AltResponseDestinationIPs: []string{loopbackIP},
+						AltDstEndpoints:        selfBackends,
+						AltRequestSourceIPs:    altRequestSourceIPs,
+						AltRequestDstEndpoints: selfBackends,
 					}))
 					a.ValidateMetrics(ctx, pod, a.GetEgressMetricsRequirements())
 				})

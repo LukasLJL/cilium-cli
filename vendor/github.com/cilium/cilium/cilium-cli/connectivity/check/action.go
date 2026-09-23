@@ -714,17 +714,16 @@ func (a *Action) GetEgressRequirements(p FlowParameters) (reqs []filters.FlowSet
 			}
 			request = filters.Or(request, filters.And(filters.IP(srcIP, endpoint.IP), filters.TCP(0, endpoint.Port)))
 			response = filters.Or(response, filters.And(filters.IP(endpoint.IP, srcIP), filters.TCP(endpoint.Port, 0)))
+		}
+		for _, endpoint := range p.AltRequestDstEndpoints {
+			if net.ParseIP(endpoint.IP) == nil || endpoint.Port == 0 {
+				continue
+			}
 			for _, sourceIP := range p.AltRequestSourceIPs {
 				if net.ParseIP(sourceIP) == nil {
 					continue
 				}
 				request = filters.Or(request, filters.And(filters.IP(sourceIP, endpoint.IP), filters.TCP(0, endpoint.Port)))
-			}
-			for _, destinationIP := range p.AltResponseDestinationIPs {
-				if net.ParseIP(destinationIP) == nil {
-					continue
-				}
-				response = filters.Or(response, filters.And(filters.IP(endpoint.IP, destinationIP), filters.TCP(endpoint.Port, 0)))
 			}
 		}
 

@@ -373,12 +373,12 @@ type FlowParameters struct {
 	AltDstEndpoints []FlowEndpoint
 
 	// AltRequestSourceIPs contains alternative request source addresses. These
-	// addresses are only combined with AltDstEndpoints.
+	// addresses are only combined with AltRequestDstEndpoints.
 	AltRequestSourceIPs []string
 
-	// AltResponseDestinationIPs contains alternative response destination
-	// addresses. These addresses are only combined with AltDstEndpoints.
-	AltResponseDestinationIPs []string
+	// AltRequestDstEndpoints contains destination IP and port pairs that are
+	// valid only with AltRequestSourceIPs.
+	AltRequestDstEndpoints []FlowEndpoint
 }
 
 // FlowEndpoint identifies one valid destination of a flow.
