@@ -419,6 +419,10 @@ func (ct *ConnectivityTest) ForceDisableFeature(feature features.Feature) {
 	ct.Features[feature] = features.Status{Enabled: false}
 }
 
+func isEKSFargateNode(node *slimcorev1.Node) bool {
+	return node != nil && node.ObjectMeta.Labels["eks.amazonaws.com/compute-type"] == "fargate"
+}
+
 func canNodeRunCilium(node *slimcorev1.Node) bool {
 	val, ok := node.ObjectMeta.Labels["cilium.io/no-schedule"]
 	return !ok || val == "false"

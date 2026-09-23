@@ -366,6 +366,25 @@ type FlowParameters struct {
 	// DstPort to be matched. This is useful if the destination port is NATed,
 	// which is for example the case for service ports, NodePort or HostPort
 	AltDstPort uint32
+
+	// AltDstEndpoints contains alternative destination IP and port pairs. Each
+	// pair is matched atomically, which avoids accepting combinations that do
+	// not identify an actual destination after NAT.
+	AltDstEndpoints []FlowEndpoint
+
+	// AltRequestSourceIPs contains alternative request source addresses. These
+	// addresses are only combined with AltRequestDstEndpoints.
+	AltRequestSourceIPs []string
+
+	// AltRequestDstEndpoints contains destination IP and port pairs that are
+	// valid only with AltRequestSourceIPs.
+	AltRequestDstEndpoints []FlowEndpoint
+}
+
+// FlowEndpoint identifies one valid destination of a flow.
+type FlowEndpoint struct {
+	IP   string
+	Port uint32
 }
 
 type flowsSet []*observer.GetFlowsResponse_Flow

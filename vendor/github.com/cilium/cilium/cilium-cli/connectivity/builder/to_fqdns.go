@@ -44,14 +44,7 @@ func (t toFqdns) build(ct *check.ConnectivityTest, templates map[string]string) 
 			extTarget := ct.Params().ExternalTarget
 			if a.Destination().Port() == 80 && a.Destination().Address(features.GetIPFamily(extTarget)) == extTarget {
 				if a.Destination().Path() == "/" || a.Destination().Path() == "" {
-					egress = check.ResultDNSOK
-					egress.HTTP = check.HTTP{
-						Method: "GET",
-						// Trim the trailing dot, if any, to match the behavior of the curl
-						// action and make sure that flow validation can succeed.
-						URL: fmt.Sprintf("http://%s/", strings.TrimSuffix(extTarget, ".")),
-					}
-					return egress, check.ResultNone
+					return check.ResultDNSOK, check.ResultNone
 				}
 				// Else expect HTTP drop by proxy
 				return check.ResultDNSOKDropCurlHTTPError, check.ResultNone
@@ -128,12 +121,7 @@ func (t toFqdnsWithProxy) build(ct *check.ConnectivityTest, templates map[string
 			// only matching connections with destination port 80.
 			if a.Destination().Address(features.GetIPFamily(extTarget)) == extTarget {
 				if a.Destination().Port() == 80 {
-					egress = check.ResultDNSOK
-					egress.HTTP = check.HTTP{
-						Method: "GET",
-						URL:    fmt.Sprintf("http://%s/", strings.TrimSuffix(extTarget, ".")),
-					}
-					return egress, check.ResultNone
+					return check.ResultDNSOK, check.ResultNone
 				}
 				// other ports miss the destination port match on the Envoy
 				// filter chain, so they get connected, but not forwarded.

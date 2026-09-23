@@ -1016,6 +1016,10 @@ func (ct *ConnectivityTest) getNodes(ctx context.Context) error {
 	}
 
 	for _, node := range nodeList.Items {
+		if isEKSFargateNode(&node) {
+			continue
+		}
+
 		if canNodeRunCilium(&node) {
 			if isControlPlane(&node) {
 				ct.controlPlaneNodes[node.ObjectMeta.Name] = node.DeepCopy()
